@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "start:rebuild": "next build && next start",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate:pg",
@@ -38,7 +39,6 @@
     "clsx": "^2.0.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.29.4",
-    "eslint": "8.48.0",
     "eslint-config-next": "14.0.2",
     "file-loader": "^6.2.0",
     "framer-motion": "^10.16.4",
@@ -61,7 +61,11 @@
     "use-sound": "^4.0.1"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
     "drizzle-kit": "^0.20.14",
+    "eslint": "8.57.0",
+    "eslint-plugin-react": "^7.34.0",
     "nextjs-node-loader": "1.1.5-alpha.0",
     "pg": "^8.11.3"
   }
