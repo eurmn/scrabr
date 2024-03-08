@@ -34,22 +34,16 @@ export type BaseGameState = {
   users: BaseUser[],
   roomCode?: string;
   winner?: string;
+  wordsCreated: string[]
 };
 
 export type ClientGameState = {
   rack: ScrabbleCard[],
   currentPlayScore: number,
-  remainingTiles: number
+  remainingTiles: number,
+  newUser?: boolean,
+  newReady?: boolean,
 } & BaseGameState;
-
-export type RoomJoinedEvent = {
-  roomCode: string;
-  newUser: boolean;
-} & BaseGameState;
-
-export type UsersReadyEvent = {
-  usersReady: string[]
-};
 
 export type Bag = {
   total: number,
@@ -65,6 +59,7 @@ export type Bag = {
   d: number,
   l: number,
   c: number,
+  ç: number,
   p: number,
   n: number,
   b: number,

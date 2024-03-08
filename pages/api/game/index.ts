@@ -5,11 +5,11 @@ import { Server as ServerIO } from 'socket.io';
 import { db } from '@/drizzle';
 import { rooms, users } from '@/drizzle/schema';
 import { ClientGameState, NextApiResponseServerIo, ScrabbleCard } from '@/types';
-import { drawLetter, filterWords, findWordsOnBoard, generateCombinations, generateEmptyBoard, generateNewBag, generateNewRack, getScoreOfWord, hasLooseTile, isEmptyTile } from '@/utils';
+import { Letters, drawLetter, filterWords, findWordsOnBoard, generateCombinations, generateEmptyBoard, generateNewBag, generateNewRack, getScoreOfWord, hasLooseTile, isEmptyTile, normalizeWord } from '@/utils';
 import { eq } from 'drizzle-orm';
 import fs from 'fs';
 import { type Nodehun as NodehunType } from 'nodehun';
-// @ts-expect-error wil complain about importing a .node file
+// @ts-expect-error typescript will complain about importing a .node file
 import { Nodehun } from 'nodehun/build/Release/Nodehun.node';
 
 console.log('Loading affix...');
@@ -26,6 +26,7 @@ export const config = {
 
 type CreateRoomArgs = {
   username: string;
+  blitz: boolean;
 };
 
 type JoinRoomArgs = {
@@ -44,6 +45,10 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
     const dict: NodehunType = new Nodehun(affix, dictionary);
     console.log('initialized nodehun');
 
+    const isCorrect = (word: string) => {
+      return dict.spellSync(word) || !!dict.suggestSync(word)?.map(w => normalizeWord(w)).includes(word);
+    };
+
     const path = '/api/game';
     const httpServer: NetServer = res.socket.server as unknown as NetServer;
     const io = new ServerIO(httpServer, {
@@ -53,6 +58,41 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
 
     io.on('connection', (socket) => {
       socket.join(socket.id);
+
+      socket.on('disconnect', async () => {
+        const user = (
+          await db.query.users.findFirst({
+            where: eq(users.id, socket.id),
+            with: {
+              room: {
+                with: {
+                  users: true
+                }
+              }
+            }
+          })
+        );
+
+        if (user) {
+          await db.delete(users).where(eq(users.id, socket.id));
+          const { room } = user;
+
+          if (room) {
+            const newUsers = room.users.filter(({ id }) => id !== socket.id);
+
+            if (newUsers.length === 0) {
+              await db.delete(rooms).where(eq(rooms.id, room.id));
+              return;
+            }
+
+            io.to(room.id).emit('gamestate', {
+              roomCode: room.id,
+              users: newUsers.map(({ id, ready, username, score }) => ({ id, ready, username, score })),
+              newUser: true
+            });
+          }
+        }
+      });
 
       socket.on('join-room', async ({ username, id }: JoinRoomArgs) => {
         await socket.join(id);
@@ -92,17 +132,19 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
         });
       });
 
-      socket.on('create-room', async ({ username }: CreateRoomArgs) => {
-        // create 6 digit room code with lowercase and uppercase letters and numbers
+      socket.on('create-room', async ({ username, blitz }: CreateRoomArgs) => {
         const id = Math.random().toString(36).substring(2, 8).toUpperCase();
         const board = generateEmptyBoard();
         const gameStarted = false;
- 
+        const bag = generateNewBag(blitz);
+
         await db.insert(rooms).values({
           id,
           board,
           createdAt: new Date(),
-          gameStarted
+          gameStarted,
+          blitz,
+          bag
         });
 
         const user = {
@@ -121,7 +163,8 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
           board,
           gameStarted,
           users: [{ ...user, ready: false }],
-          newUser: true
+          newUser: true,
+          remainingTiles: bag.total
         });
       });
 
@@ -165,14 +208,16 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
           
           const gameState: Partial<ClientGameState> = {
             users: newUsers,
+            newReady: true
           };
 
-          if (newUsers.length === 2 && newUsers[0].ready && newUsers[1].ready) {
+          if (newUsers.length > 1 && newUsers.every(({ ready }) => ready)) {
             let { bag } = room;
-            const racks: ScrabbleCard[][] = [[],[]];
+            const racks: ScrabbleCard[][] = [];
 
-            [racks[0], bag] = generateNewRack(bag);
-            [racks[1], bag] = generateNewRack(bag);
+            for (let i = 0; i < newUsers.length; i++) {
+              [racks[i], bag] = generateNewRack(bag);
+            }
 
             const { gameStarted, turn } = (
               await db
@@ -182,7 +227,7 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
                 .returning()
             )[0];
 
-            for (let i = 0; i < 2; i++) {
+            for (let i = 0; i < newUsers.length; i++) {
               io.to(newUsers[i].id).emit('gamestate', {
                 rack: racks[i],
               });
@@ -196,6 +241,7 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
             gameState.gameStarted = gameStarted;
             gameState.turn = turn!;
             gameState.remainingTiles = bag.total;
+            gameState.newReady = false;
           }
 
           io.to(roomCode).emit('gamestate', gameState);
@@ -287,11 +333,10 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
           // replace it for each possible letter
           if (words[i].includes('_')) {
             let possibleWords: string[] = [];
-            generateCombinations(words[i], 0, '', possibleWords);
+            generateCombinations(words[i], 0, '', possibleWords, '_', Letters);
             possibleWords = [...new Set(possibleWords)];
 
             const results = await Promise.all(possibleWords.map((w) => dict.spell(w)));
-            console.log({ results });
             const wildCardWord = possibleWords.filter((w, i) => results[i])[0];
 
             if (wildCardWord) {
@@ -302,7 +347,7 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
             continue;
           }
  
-          if (dict.spellSync(words[i])) {
+          if (isCorrect(words[i])) {
             validWords.push(words[i]);
             validWordsPositions.push(wordPositions[i]);
           }
@@ -341,11 +386,13 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
           return;
         }
 
-        let { bag } = room;
-        const { users: roomUsers, board } = room;
+        let { bag, wordsCreated } = room;
+        const { users: roomUsers, board, blitz } = room;
 
         const firstMove = isEmptyTile(board[7][7]);
-        const currentUser = roomUsers.find(({ id }) => id === socket.id);
+        const currentUserIndex = roomUsers.findIndex(({ id }) => id === socket.id);
+        const currentUser = roomUsers[currentUserIndex];
+
         if (!currentUser || !room.gameStarted || room.turn !== socket.id) {
           socket.emit('gamestate', {});
           return;
@@ -406,11 +453,10 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
           // replace it for each possible letter
           if (words[i].includes('_')) {
             let possibleWords: string[] = [];
-            generateCombinations(words[i], 0, '', possibleWords);
+            generateCombinations(words[i], 0, '', possibleWords, '_', Letters);
             possibleWords = [...new Set(possibleWords)];
 
             const results = await Promise.all(possibleWords.map((w) => dict.spell(w)));
-            console.log({ results });
             const wildCardWords = possibleWords.filter((w, i) => results[i]);
 
             if (wildCardWords.length > 0) {
@@ -421,25 +467,28 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
             continue;
           }
  
-          if (dict.spellSync(words[i])) {
+          if (isCorrect(words[i])) {
             validWords.push(words[i]);
             validWordsPositions.push(wordPositions[i]);
           }
         }
-
-        console.log({ words, validWords });
 
         if (words.length !== validWords.length) {
           socket.emit('gamestate', {});
           return;
         }
 
+        wordsCreated = [...wordsCreated, ...validWords];
+
         // sum of all getScoreOfWord(word)
         const newScore = currentUser.score + validWords
           .map((word, i) => getScoreOfWord(word, wordPositions[i]))
           .reduce((a, b) => a + b, 0);
-                
-        const { rack: opponentRack, id: opponentId } = roomUsers.find(({ id }) => id !== socket.id)!;
+
+        const nextPlayerIndex = currentUserIndex === roomUsers.length - 1 ? 0 : currentUserIndex + 1;
+        const nextPlayer = roomUsers[nextPlayerIndex];
+
+        const { rack: nextPlayerRack, id: nextPlayerId } = nextPlayer;
 
         for (let i = 0; i < usedLetters.length; i++) {
           const index = currentUserRack.findIndex(letter => letter === usedLetters[i]);
@@ -451,15 +500,16 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
           .set({ rack: currentUserRack, score: newScore })
           .where(eq(users.id, socket.id));
 
-        if (bag.total <= 7 - opponentRack.length) {
+        if (bag.total <= 7 - nextPlayerRack.length) {
           const winner = [...roomUsers].sort((a, b) => b.score - a.score)[0].id;
 
           const gameState = {
-            bag: generateNewBag(),
+            bag: generateNewBag(blitz),
             turn: null,
             board: generateEmptyBoard(),
             gameStarted: false,
-            winner
+            winner,
+            wordsCreated: []
           };
 
           const clientState = {
@@ -491,64 +541,87 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
         }
 
         let letter: string;
-        while (opponentRack.length < 7) {
+        while (nextPlayerRack.length < 7) {
           [letter, bag] = drawLetter(bag);
-          opponentRack.push(letter);
+          nextPlayerRack.push(letter);
         }
 
         await db
           .update(rooms)
-          .set({ bag, turn: opponentId, board })
+          .set({ bag, turn: nextPlayerId, board, wordsCreated })
           .where(eq(rooms.id, roomCode));
         
         await db
           .update(users)
-          .set({ rack: opponentRack })
-          .where(eq(users.id, opponentId));
+          .set({ rack: nextPlayerRack })
+          .where(eq(users.id, nextPlayerId));
 
         const gameState = {
           board,
-          turn: opponentId,
+          turn: nextPlayerId,
           users: roomUsers.map(({ id, username, score }) => ({
             id,
             username,
             score: id === socket.id ? newScore : score
           })),
-          currentPlayScore: 0
+          currentPlayScore: 0,
+          remainingTiles: bag.total,
+          wordsCreated
         };
 
         socket.emit('gamestate', {
           ...gameState,
           rack: currentUserRack.map(letter => ({ letter, id: crypto.randomUUID() })),
-          remainingTiles: bag.total
         });
 
-        io.to(opponentId).emit('gamestate', {
+        io.to(nextPlayerId).emit('gamestate', {
           ...gameState,
-          rack: opponentRack.map(letter => ({ letter, id: crypto.randomUUID() })),
-          remainingTiles: bag.total
+          rack: nextPlayerRack.map(letter => ({ letter, id: crypto.randomUUID() })),
         });
+
+        for (let i = 0; i < roomUsers.length; i++) {
+          if (roomUsers[i].id === socket.id || roomUsers[i].id === nextPlayerId) {
+            continue;
+          }
+
+          io.to(roomUsers[i].id).emit('gamestate', gameState);
+        }
       });
 
       socket.on('skip', async ({ roomCode }: { roomCode: string }) => {
         const room = await db.query.rooms.findFirst({ where: eq(rooms.id, roomCode), with: { users: true } });
-        const opponent = room?.users.filter(({ id }) => id !== socket.id)[0];
+        const currentUserIndex = room?.users.findIndex(({ id }) => id === socket.id);
 
-        if (room && room.turn === socket.id && opponent) {
+        if (currentUserIndex === -1 || !currentUserIndex || !room) {
+          return;
+        }
+
+        const currentUser = room.users[currentUserIndex];
+
+        if (room.turn !== currentUser.id) {
+          return;
+        }
+
+        const { users: roomUsers } = room;
+        const nextPlayerIndex = currentUserIndex === roomUsers.length - 1 ? 0 : currentUserIndex + 1;
+        const nextPlayer = roomUsers[nextPlayerIndex];
+
+        if (room && room.turn === socket.id && nextPlayer) {
           let { bag } = room;
-          const { users: roomUsers } = room;
+          const { users: roomUsers, blitz } = room;
 
           let letter: string;
-          const opponentRack = opponent.rack;
+          const nextUserRack = nextPlayer.rack;
 
-          if (bag.total <= 7 - opponentRack.length) {
+          if (bag.total <= 7 - nextUserRack.length) {
             const winner = [...roomUsers].sort((a, b) => b.score - a.score)[0].id;
 
             const gameState = {
-              bag: generateNewBag(),
+              bag: generateNewBag(blitz),
               turn: null,
               board: generateEmptyBoard(),
               gameStarted: false,
+              wordsCreated: [],
               winner
             };
 
@@ -580,31 +653,38 @@ const ioHandler = async (req: NextApiRequest, res: NextApiResponseServerIo) => {
             return;
           }
 
-          while (opponentRack.length < 7) {
+          while (nextUserRack.length < 7) {
             [letter, bag] = drawLetter(bag);
-            opponentRack.push(letter);
+            nextUserRack.push(letter);
           }
 
           await db
             .update(rooms)
-            .set({ turn: opponent.id, bag })
+            .set({ turn: nextPlayer.id, bag })
             .where(eq(rooms.id, roomCode));
           
           await db
             .update(users)
-            .set({ rack: opponentRack })
-            .where(eq(users.id, opponent.id));
-
-          io.to(socket.id).emit('gamestate', {
-            turn: opponent.id,
-            remainingTiles: bag.total
-          });
-
-          io.to(opponent.id).emit('gamestate', {
-            turn: opponent.id,
+            .set({ rack: nextUserRack })
+            .where(eq(users.id, nextPlayer.id));
+          
+          const gameState = {
+            turn: nextPlayer.id,
             remainingTiles: bag.total,
-            rack: opponentRack.map(letter => ({ letter, id: crypto.randomUUID() }))
+          };
+
+          io.to(nextPlayer.id).emit('gamestate', {
+            ...gameState,
+            rack: nextUserRack.map(letter => ({ letter, id: crypto.randomUUID() }))
           });
+
+          for (let i = 0; i < roomUsers.length; i++) {
+            if (roomUsers[i].id === nextPlayer.id) {
+              continue;
+            }
+  
+            io.to(roomUsers[i].id).emit('gamestate', gameState);
+          }
         }
       });
     });

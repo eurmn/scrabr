@@ -132,7 +132,7 @@ export function findWordsOnBoard(matrix: string[][]): [string[], number[][][]] {
   // Check rows
   for(let i = 0; i < size; i++) {
     const row = matrix[i].join('');
-    const matches = row.match(/\b\w+\b/g);
+    const matches = row.match(/[a-zç_]+/g);
     if(matches) {
       matches.forEach(word => {
         const start = row.indexOf(word);
@@ -149,7 +149,7 @@ export function findWordsOnBoard(matrix: string[][]): [string[], number[][][]] {
   // Check columns
   for(let j = 0; j < size; j++) {
     const col = matrix.map(row => row[j]).join('');
-    const matches = col.match(/\b\w+\b/g);
+    const matches = col.match(/[a-zç_]+/g);
     if(matches) {
       matches.forEach(word => {
         const start = col.indexOf(word);
@@ -184,10 +184,10 @@ export function getScoreOfWord(word: string, letterPositions: number[][]): numbe
   return wordScore * wordMultiplier;
 }
 
-export function generateNewBag(): Bag {
-  return {
+export function generateNewBag(fastMode = false): Bag {
+  const bag: Bag = {
     total: 120,
-    '_': 2,
+    '_': 3,
     a: 14,
     e: 11,
     i: 10,
@@ -203,8 +203,9 @@ export function generateNewBag(): Bag {
     p: 4,
     n: 4,
     b: 3,
-    f: 3,
-    v: 3,
+    ç: 2,
+    f: 2,
+    v: 2,
     g: 2,
     h: 2,
     j: 2,
@@ -212,6 +213,15 @@ export function generateNewBag(): Bag {
     x: 1,
     z: 1
   };
+
+  if (fastMode) {
+    // half the letters
+    for (const letter in bag) {
+      bag[letter as keyof Bag] = Math.ceil(bag[letter as keyof Bag] / 2);
+    }
+  }
+
+  return bag;
 }
 
 export function hasLooseTile(matrix: string[][]) {
@@ -266,19 +276,36 @@ export function filterWords(words: string[], wordsPositions: number[][][], posit
   return [filteredWords, filteredWordsPositions];
 }
 
-export function generateCombinations(word: string, index: number, currentWord: string, possibleWords: string[]) {
+export function generateCombinations(word: string, index: number, currentWord: string, possibleWords: string[], select: string, map: string) {
   if (index === word.length) {
     possibleWords.push(currentWord);
     return;
   }
 
-  if (word[index] === '_') {
-    for (const letter of Letters) {
-      generateCombinations(word, index + 1, currentWord + letter, possibleWords);
+  if (word[index] === select) {
+    for (const letter of map) {
+      generateCombinations(word, index + 1, currentWord + letter, possibleWords, select, map);
     }
   } else {
-    generateCombinations(word, index + 1, currentWord + word[index], possibleWords);
+    generateCombinations(word, index + 1, currentWord + word[index], possibleWords, select, map);
   }
 }
 
+export function normalizeChar(char: string): string {
+  return char === 'ç' ? char : char.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+}
+
+export function normalizeWord(word: string): string {
+  const newWord: string[] = [];
+  for (let i = 0; i < word.length; i++) {
+    newWord[i] = normalizeChar(word[i]);  
+  }
+
+  return newWord.join('');
+}
+
 export const Letters = 'aeiosumrtdlcpnbfghvjqzx';
+
+export function getUsername(id: string, users: { id: string; username: string }[]) {
+  return users.find((user) => user.id === id)?.username;
+}

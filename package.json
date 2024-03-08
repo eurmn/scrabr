@@ -1,6 +1,6 @@
 {
-  "name": "next-app-template",
-  "version": "0.0.1",
+  "name": "scrabr",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.0.16",
-    "@iconify-json/mdi": "^1.1.64",
+    "@iconify-json/solar": "^1.1.9",
     "@iconify/react": "^4.1.1",
     "@nextui-org/button": "2.0.26",
     "@nextui-org/card": "^2.0.24",

@@ -1,22 +1,24 @@
 'use client';
 
+import CreateRoomModal from '@/components/create-room-modal';
 import LetterBar from '@/components/letter-bar';
 import Tile from '@/components/tile';
-import { ClientGameState, RoomJoinedEvent, ScrabbleCard } from '@/types';
+import WinnerModal from '@/components/winner-modal';
+import WordsModal from '@/components/words-modal';
+import { ClientGameState, ScrabbleCard } from '@/types';
 import { Icon } from '@iconify/react';
 import { Button } from '@nextui-org/button';
 import { Card, CardBody } from '@nextui-org/card';
 import { Chip } from '@nextui-org/chip';
 import { Divider } from '@nextui-org/divider';
-import { Input } from '@nextui-org/input';
-import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, useDisclosure } from '@nextui-org/modal';
-import { Reorder } from 'framer-motion';
+import { useDisclosure } from '@nextui-org/modal';
+import { AnimatePresence, Reorder } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useWindowSize from 'react-use/lib/useWindowSize';
 import { Socket, io } from 'socket.io-client';
 import useSound from 'use-sound';
-import { BonusTiles, generateEmptyBoard, generateEmptyPlayBoard, isEmptyTile } from '../utils';
+import { BonusTiles, generateEmptyBoard, generateEmptyPlayBoard, getUsername, isEmptyTile } from '../utils';
 
 const emtpyGameState: ClientGameState = {
   board: generateEmptyBoard(),
@@ -24,12 +26,9 @@ const emtpyGameState: ClientGameState = {
   users: [],
   rack: [],
   currentPlayScore: 0,
-  remainingTiles: 120
+  remainingTiles: 0,
+  wordsCreated: [],
 };
-
-function getUsername(id: string, users: { id: string; username: string }[]) {
-  return users.find((user) => user.id === id)?.username;
-}
 
 function getPlacedLetters(board: ScrabbleCard[][]): string[] {
   return board
@@ -66,26 +65,21 @@ export default function Home() {
   const [inGame, setInGame] = useState(false);
   const [movingCard, setMovingCard] = useState<ScrabbleCard | null>(null);
   const [playBoard, setPlayBoard] = useState(generateEmptyPlayBoard());
-  const [username, setUsername] = useState('');
-  const [roomCode, setRoomCode] = useState('');
-  const [createRoomLoading, setCreateRoomLoading] = useState(false);
   const [joinRoomLoading, setJoinRoomLoading] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [gameState, setGameState] = useState<ClientGameState>(emtpyGameState);
   const [socketId, setSocketId] = useState<string | null>(null);
   const [canPlay, setCanPlay] = useState<boolean>(false);
   const [evaluatingPlay, setEvaluatingPlay] = useState(false);
-  const placedCards = useMemo(() => {
-    return getPlacedLetters(playBoard);
-  }, [playBoard]);
+  const placedCards = getPlacedLetters(playBoard);
   const [highlightedPositions, setHighlightedPositions] = useState<number[][]>([]);
-  const highlightedPositionStrings = useMemo(() => {
-    return highlightedPositions.map(([rowIndex, colIndex]) => `${rowIndex}.${colIndex}`);
-  }, [highlightedPositions]);
+  const highlightedPositionStrings = highlightedPositions.map(([rowIndex, colIndex]) => `${rowIndex}.${colIndex}`);
   const usersSortedByScore = useMemo(() => {
+    console.log('calculating sorted by score...');
     return [...gameState.users].sort((a, b) => b.score - a.score);
   }, [gameState.users]);
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isWinnerOpen, onOpen: onWinnerOpen, onClose: onWinnerClose } = useDisclosure();
+  const { isOpen: isWordsOpen, onOpen: onWordsOpen, onClose: onWordsClose } = useDisclosure();
   const { width, height } = useWindowSize();
   const [playNewUser] = useSound('/sounds/new-user.mp3');
   const [playPieceTake] = useSound('/sounds/piece-take.mp3', {
@@ -93,26 +87,66 @@ export default function Home() {
   });
   const [playPiecePlace] = useSound('/sounds/piece-place.mp3');
   const [playGameOver] = useSound('/sounds/gameover.mp3');
-  const [playSendPlay] = useSound('/sounds/play.mp3');
   const [playYourTurn] = useSound('/sounds/your-turn.mp3');
+  const [playNewTurn] = useSound('/sounds/new-turn.mp3');
+  const [playReady] = useSound('/sounds/ready.mp3', {
+    volume: 0.25
+  });
 
-  const onCreateRoom = useCallback(() => {
-    setCreateRoomLoading(true);
-    socket?.emit('create-room', { username });
-  }, [socket, username]);
-
-  const onJoinRoom = useCallback(() => {
-    setJoinRoomLoading(true);
-    socket?.emit('join-room', { username, id: roomCode });
-  }, [roomCode, socket, username]);
-
-  const onToggleReady = useCallback(() => {
-    socket?.emit('toggle-ready', { roomCode: gameState.roomCode });
+  const sendCheckPlay = useCallback((playBoard: ScrabbleCard[][]) => {
+    socket?.emit('check:play', {
+      roomCode: gameState.roomCode,
+      play: playBoardToPlay(playBoard)
+    });
   }, [gameState.roomCode, socket]);
 
-  const onSendPlay = useCallback(() => {
-    playSendPlay();
+  const onCardSelect = useCallback((letter: ScrabbleCard | null) => {
+    if (letter !== null) {
+      playPieceTake();
+    }
+    setMovingCard(letter);
+  }, [playPieceTake]);
 
+  const onGrabPlacing = useCallback((rowIndex: number, colIndex: number) => {
+    playPieceTake();
+    setMovingCard(playBoard[rowIndex][colIndex]);
+    setPlayBoard(board => {
+      board[rowIndex][colIndex] = { letter: ' ', id: '' };
+      sendCheckPlay(board);
+      return [...board];
+    });
+  }, [playBoard, playPieceTake, sendCheckPlay]);
+
+  const onDropBase = useCallback((rowIndex: number, colIndex: number) => {
+    setMovingCard(movingCard => {
+      if (movingCard) {
+        playPiecePlace();
+        setPlayBoard(board => {
+          board[rowIndex][colIndex] = movingCard;
+          sendCheckPlay(board);
+          return board;
+        });
+
+        return null;
+      }
+
+      return movingCard;
+    });
+  }, [playPiecePlace, sendCheckPlay]);
+
+  const onCreateRoom = ({ username, blitz }: { username: string, blitz: boolean }) => {
+    socket?.emit('create-room', { username, blitz });
+  };
+
+  const onJoinRoom = (roomCode: string, username: string) => {
+    socket?.emit('join-room', { username, id: roomCode });
+  };
+
+  const onToggleReady = () => {
+    socket?.emit('toggle-ready', { roomCode: gameState.roomCode });
+  };
+
+  const onSendPlay = useCallback(() => {
     if (placedCards.length === 0) {
       socket?.emit('skip', { roomCode: gameState.roomCode });
       return;
@@ -123,47 +157,38 @@ export default function Home() {
       play: playBoardToPlay(playBoard)
     });
     setEvaluatingPlay(true);
-  }, [gameState.roomCode, placedCards.length, playBoard, playSendPlay, socket]);
+  }, [gameState.roomCode, placedCards.length, playBoard, socket]);
 
-  const centerIsEmpty = useMemo(() => {
-    return (
-      playBoard
-        .flat()
-        .filter((tile) => !isEmptyTile(tile.letter))
-        .length === 0
-    ) && (
-      gameState
-        .board
-        .flat()
-        .filter((tile) => !isEmptyTile(tile))
-        .length === 0
-    );
-  }, [playBoard, gameState.board]);
-
-  useEffect(() => {
-    socket?.emit('check:play', {
-      roomCode: gameState.roomCode,
-      play: playBoardToPlay(playBoard)
-    });
-  }, [gameState.roomCode, playBoard, socket]);
+  const centerIsEmpty = useMemo(() => (
+    playBoard
+      .flat()
+      .filter((tile) => !isEmptyTile(tile.letter))
+      .length === 0
+  ) && (
+    gameState
+      .board
+      .flat()
+      .filter((tile) => !isEmptyTile(tile))
+      .length === 0
+  ), [gameState.board, playBoard]);
 
   useEffect(() => {
     const socket = io(window.location.protocol + '//' + window.location.host, {
       path: '/api/game',
       port: 3000,
       closeOnBeforeunload: true
-    }); 
+    });
 
-    socket.on('gamestate', (state: Partial<RoomJoinedEvent>) => {
-      setCreateRoomLoading(false);
-      setJoinRoomLoading(false);
+    socket.on('gamestate', (state: Partial<ClientGameState>) => {
+      console.log('gamestate');
+
       setInGame(true);
       setEvaluatingPlay(false);
       setPlayBoard(generateEmptyPlayBoard());
       setHighlightedPositions([]);
 
       if (state.winner) {
-        onOpen();
+        onWinnerOpen();
         playGameOver();
       }
 
@@ -173,6 +198,12 @@ export default function Home() {
 
       if (state.turn === socket.id) {
         playYourTurn();
+      } else if (state.turn) {
+        playNewTurn();
+      }
+
+      if (state.newReady) {
+        playReady();
       }
 
       setGameState((oldState) => ({
@@ -215,9 +246,7 @@ export default function Home() {
 
     socket.on('disconnect', () => {
       setSocketId(null);
-
       setInGame(false);
-      setRoomCode('');
       setGameState(emtpyGameState);
     });
 
@@ -234,115 +263,26 @@ export default function Home() {
     return () => {
       socket.disconnect();
     };
-  }, [onOpen, playGameOver, playNewUser, playYourTurn]);
+  }, [onWinnerOpen, playGameOver, playNewTurn, playNewUser, playReady, playYourTurn]);
 
   return (
     <div className="h-full flex gap-4">
-      {isOpen && (
+      {isWinnerOpen && (
         <Confetti
           width={width}
           height={height}
           style={{ zIndex: 99999999 }}
         />
       )}
-      <Modal
-        isOpen={isOpen}
-        onClose={() => {
-          setGameState(state => ({
-            ...state,
-            winner: undefined
-          }));
-        }}
-      >
-        <ModalContent>
-          <ModalHeader className="flex flex-col gap-1 w-full text-center">{getUsername(gameState.winner!, gameState.users)} ganhou!!</ModalHeader>
-          <ModalBody className="flex flex-col gap-2 items-center justify-center">
-            {usersSortedByScore.map((user, i) => (
-              <Chip
-                color={gameState.winner === user.id ? 'success' : 'default'}
-                variant="bordered"
-                startContent={
-                  gameState.winner === user.id ?
-                    <Icon icon="mdi:crown" /> : undefined
-                }
-                className="transition-all px-2"
-                key={user.id}
-                size="lg"
-              >
-                {i+1}. {user.username} ({user.score})
-              </Chip>
-            ))}
-          </ModalBody>
-          <ModalFooter>
-            <Button color="primary" onPress={onClose}>
-                        Ok
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-      <Modal
-        isOpen={!inGame}
-        onClose={() => {
-          setGameState(state => ({
-            ...state,
-            winner: undefined
-          }));
-        }}
-        hideCloseButton
-        size="sm"
-      >
-        <ModalContent>
-          <ModalHeader className="w-full">
-            <h1 className="font-bold text-center text-3xl w-full">Scrabr</h1>
-          </ModalHeader>
-          <ModalBody className="p-5 pt-0">
-            <Divider />
-            <div className="space-y-1">
-              <h4 className="text-medium font-medium">Escolha seu nome de usuário</h4>
-              <p className="text-small text-default-400">E crie um jogo ou entre em uma sala existente.</p>
-            </div>
-            <Divider />
-            <Input
-              value={username}
-              onValueChange={setUsername}
-              label="Nome de usuário"
-              type="text"
-              size="sm"
-            />
-            <Divider />
-            <div className="flex flex-col gap-3">
-              <Input
-                value={roomCode}
-                onValueChange={setRoomCode}
-                label="Código do jogo"
-                type="text"
-                size="sm"
-              />
-              <Button
-                isLoading={joinRoomLoading}
-                color="secondary"
-                isDisabled={!(username.length && roomCode.length)}
-                onPress={() => {
-                  onJoinRoom();
-                }}
-              >
-                                Entrar
-              </Button>
-            </div>
-            <Divider />
-            <Button
-              isLoading={createRoomLoading}
-              color="primary"
-              isDisabled={!username.length}
-              onPress={() => {
-                onCreateRoom();
-              }}
-            >
-                            Criar um jogo
-            </Button>
-          </ModalBody>
-        </ModalContent>
-      </Modal>
+      <WinnerModal isOpen={isWinnerOpen} onClose={onWinnerClose} users={gameState.users} winner={gameState.winner} />
+      <WordsModal isOpen={isWordsOpen} onClose={onWordsClose} wordsCreated={gameState.wordsCreated} />
+      <CreateRoomModal
+        open={!inGame}
+        onJoinRoom={onJoinRoom}
+        onCreateRoom={onCreateRoom}
+        joinRoomLoading={joinRoomLoading}
+        onClose={setJoinRoomLoading}
+      />
       <Card>
         <CardBody className={`min-w-[10rem] max-w-[15rem] transition-all overflow-x-hidden bg-content1 ${inGame ? 'brightness-100': 'brightness-50'}`}>
           {inGame && (
@@ -382,7 +322,7 @@ export default function Home() {
                           }}
                           startContent={
                             user.ready ?
-                              <Icon icon="mdi:check-bold" /> : undefined
+                              <Icon icon="solar:unread-linear" /> : undefined
                           }
                         >
                           {user.username}
@@ -394,7 +334,7 @@ export default function Home() {
               <Divider className="mb-3" />
               {gameState.gameStarted ? (
                 <>
-                  <h2 className="font-semibold text-center mb-3">{gameState.remainingTiles} Pedras</h2>
+                  <h2 className="font-semibold text-center mb-3">{gameState.remainingTiles} Peças</h2>
                   <Divider className="mb-3" />
                   {gameState.turn === socketId && (
                     <>
@@ -408,11 +348,15 @@ export default function Home() {
                       <Divider className="mb-3" />
                     </>
                   )}
+                  <Button className="mb-3 min-w-0 w-full box-border flex gap-1 px-1" color="secondary" onClick={() => onWordsOpen()}>
+                    Ver Palavras
+                  </Button>
+                  <Divider className="mb-3" />
                   <Button
                     className="min-w-0 w-full box-border flex gap-1 px-1"
                     endContent={
                       (gameState.turn === socketId && !evaluatingPlay) ?
-                        <Icon icon="mdi:play" />: undefined
+                        <Icon icon="solar:play-bold" />: undefined
                     }
                     color={
                       gameState.turn === socketId ?
@@ -421,8 +365,8 @@ export default function Home() {
                     onPress={() => onSendPlay()}
                     isDisabled={
                       !canPlay
-                                            || gameState.turn !== socketId
-                                            || centerIsEmpty
+                      || gameState.turn !== socketId
+                      || centerIsEmpty
                     }
                     isLoading={evaluatingPlay}
                   >
@@ -437,10 +381,12 @@ export default function Home() {
                 <Button
                   className="min-w-0 w-full box-border flex gap-1 px-1"
                   startContent={
-                    <Icon icon={
-                      gameState.users.find(({id}) => id === socketId)?.ready ? 
-                        'mdi:check-bold': 'mdi:times'
-                    } />
+                    <Icon
+                      fontSize="1.25em"
+                      icon={
+                        gameState.users.find(({id}) => id === socketId)?.ready ? 
+                          'solar:check-circle-bold': 'solar:unread-outline'
+                      } />
                   }
                   color={
                     gameState.users.find(({id}) => id === socketId)?.ready ?
@@ -468,40 +414,32 @@ export default function Home() {
                   <Tile
                     type="base"
                     tile={tile}
-                    onDrop={() => {
-                      if (movingCard) {
-                        playPiecePlace();
-
-                        const newBoard = [...playBoard];
-                        newBoard[rowIndex][colIndex] = movingCard;
-                        setPlayBoard(newBoard);
-                        setMovingCard(null);
-                      }
-                    }}
-                    center={rowIndex === 7 && colIndex === 7}
+                    onDrop={onDropBase}
+                    rowIndex={rowIndex}
+                    colIndex={colIndex}
                     highlighted={highlightedPositionStrings.includes(
                       `${rowIndex}.${colIndex}`
                     )}
                   />
-                  {!isEmptyTile(gameState.board[rowIndex][colIndex]) && (
-                    <Tile
-                      type="placed"
-                      tile={gameState.board[rowIndex][colIndex]}
-                      bonus={BonusTiles[rowIndex][colIndex]}
-                    />
-                  )}
+                  <AnimatePresence>
+                    {!isEmptyTile(gameState.board[rowIndex][colIndex]) && (
+                      <Tile
+                        type="placed"
+                        tile={gameState.board[rowIndex][colIndex]}
+                        bonus={BonusTiles[rowIndex][colIndex]}
+                        rowIndex={rowIndex}
+                        colIndex={colIndex}
+                      />
+                    )}
+                  </AnimatePresence>
                   {!isEmptyTile(playBoard[rowIndex][colIndex].letter) && (
                     <Tile
                       type="placing"
                       tile={playBoard[rowIndex][colIndex].letter}
-                      onGrab={() => {
-                        playPieceTake();
-                        setMovingCard(playBoard[rowIndex][colIndex]);
-                        const newBoard = [...playBoard];
-                        newBoard[rowIndex][colIndex] = { letter: ' ', id: '' };
-                        setPlayBoard(newBoard);
-                      }}
+                      onGrab={() => onGrabPlacing(rowIndex, colIndex)}
                       bonus={BonusTiles[rowIndex][colIndex]}
+                      rowIndex={rowIndex}
+                      colIndex={colIndex}
                     />
                   )}
                 </div>
@@ -514,12 +452,7 @@ export default function Home() {
         active={gameState.turn === socketId}
         inGame={inGame && gameState.gameStarted}
         letters={gameState.rack}
-        onCardSelect={(letter) => {
-          if (letter !== null) {
-            playPieceTake();
-          }
-          setMovingCard(letter);
-        }}
+        onCardSelect={onCardSelect}
         movingCard={movingCard}
         placedCards={placedCards}
       />

@@ -11,6 +11,8 @@ export const rooms = pgTable('rooms', {
   gameStarted: boolean('game_started').notNull(),
   bag: json('bag').$type<Bag>().notNull().$default(generateNewBag),
   winner: text('winner'),
+  wordsCreated: text('words_created').array().notNull().$default(() => []),
+  blitz: boolean('fast_mode').notNull().default(false),
 });
 
 export const roomsRelations = relations(rooms, ({ many }) => ({

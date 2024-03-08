@@ -1,9 +1,10 @@
 'use client';
 
-import { Card, CardBody } from '@nextui-org/card';
-import { useCallback, useEffect, useState } from 'react';
-import ScrabbleCard from './scrabble-card';
 import { ScrabbleCard as ScrabbleCardType } from '@/types';
+import { Card, CardBody } from '@nextui-org/card';
+import { AnimatePresence, Reorder } from 'framer-motion';
+import { memo, useCallback, useEffect, useState } from 'react';
+import ScrabbleCard from './scrabble-card';
 
 type Props = {
     letters: ScrabbleCardType[];
@@ -14,11 +15,17 @@ type Props = {
     placedCards?: string[];
 }
 
-export default function LetterBar({ letters, onCardSelect, movingCard, inGame, active, placedCards }: Props) {
+function InternalLetterBar({ letters, onCardSelect, movingCard, inGame, active, placedCards }: Props) {
   const [cardSize, setCardSize] = useState<{ height: number, width: number }>({ height: 0, width: 0 });
   const [movingCardPosition, setMovingCardPosition] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
 
-  useEffect(() => {
+  const onMouseMove = (e: MouseEvent) => setMovingCardPosition({ x: e.clientX, y: e.clientY });
+
+  const onMouseUp = useCallback(() => {
+    onCardSelect?.(null);
+  }, [onCardSelect]);
+
+  useEffect(() => { 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
 
@@ -26,50 +33,56 @@ export default function LetterBar({ letters, onCardSelect, movingCard, inGame, a
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
-  });
+  }, [onMouseUp]);
 
-  const onMouseMove = (e: MouseEvent) => setMovingCardPosition({ x: e.clientX, y: e.clientY });
-
-  const onMouseUp = useCallback(() => {
-    if (movingCard) {
-      onCardSelect?.(null);
+  const onGrab = useCallback(({ height, width, x, y, letter }: { height: number, width: number, x: number, y: number, letter: ScrabbleCardType }) => {
+    if (active) {
+      onCardSelect?.(letter);
+      setCardSize({ height, width });
+      setMovingCardPosition({ x, y });
     }
-  }, [movingCard, onCardSelect]);
+  }, [active, onCardSelect]);
 
   return (    
     <div className={`w-[6rem] h-full ${inGame ? undefined: 'brightness-50'}`}>
-      {movingCard && (
-        <ScrabbleCard
-          letter={movingCard.letter}
-          dragging
-          style={{
-            position: 'absolute',
-            top: movingCardPosition.y - cardSize.height / 2,
-            left: movingCardPosition.x - cardSize.width / 2,
-            zIndex: 1000,
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {movingCard && (
+          <ScrabbleCard
+            letter={movingCard}
+            dragging
+            style={{
+              position: 'absolute',
+              zIndex: 1000
+            }}
+            x={movingCardPosition.x - cardSize.width / 2}
+            y={movingCardPosition.y - cardSize.height / 2}
+          />
+        )}
+      </AnimatePresence>
       <Card className="h-full">
         <CardBody>
-          <div className="flex flex-col w-full flex-1 justify-center items-center">
+          <Reorder.Group
+            axis="y"
+            values={letters}
+            onReorder={() => {}}
+            className="flex flex-col w-full flex-1 justify-center items-center"
+          >
             {inGame ?
-              letters.map((letter, index) => (
-                <ScrabbleCard
-                  key={index}
-                  letter={letter.letter}
-                  onGrab={({ height, width, x, y }) => {
-                    if (active) {
-                      onCardSelect?.(letter);
-                      setCardSize({ height, width });
-                      setMovingCardPosition({ x, y });
+              letters.map((letter) => (
+                <Reorder.Item
+                  value={letter.letter}
+                  key={letter.id}
+                  dragListener={false}
+                >
+                  <ScrabbleCard
+                    letter={letter}
+                    onGrab={onGrab}
+                    invisible={
+                      (movingCard && movingCard.id === letter.id) ||
+                        (!!letter.id && placedCards?.includes(letter.id))
                     }
-                  }}
-                  invisible={
-                    (movingCard && movingCard.id === letter.id) ||
-                                        (!!letter.id && placedCards?.includes(letter.id))
-                  }
-                />
+                  />
+                </Reorder.Item>
               ))
               : (
                 letters.map((letter, index) => (
@@ -77,9 +90,13 @@ export default function LetterBar({ letters, onCardSelect, movingCard, inGame, a
                 ))
               )
             }
-          </div>
+          </Reorder.Group>
         </CardBody>
       </Card>
     </div>
   );
 }
+
+const LetterBar = memo(InternalLetterBar);
+
+export default LetterBar;

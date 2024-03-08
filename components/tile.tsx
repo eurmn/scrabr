@@ -1,16 +1,19 @@
 import { LETTER_SCORES } from '@/utils';
 import { Icon } from '@iconify/react';
+import { motion } from 'framer-motion';
+import { memo, useMemo } from 'react';
 
 type TileType = 'base' | 'placed' | 'placing';
 
 type Props = {
-    onDrop?: () => void;
+    onDrop?: (rowIndex: number, colIndex: number) => void;
     onGrab?: () => void;
     tile: string | null;
     type: TileType;
     bonus?: string | null;
-    center?: boolean;
     highlighted?: boolean;
+    rowIndex: number;
+    colIndex: number;
 }
 
 function getZIndex(type: TileType, highlighted?: boolean) {
@@ -69,15 +72,19 @@ function getRounding(type: TileType) {
   return '';
 }
 
-export default function Tile({ onDrop, tile, type, onGrab, bonus, center, highlighted }: Props) {
+function InternalTile({ onDrop, tile, type, onGrab, bonus, highlighted, rowIndex, colIndex }: Props) {
+  const center = useMemo(() => type === 'base' && rowIndex === 7 && colIndex === 7, [type, rowIndex, colIndex]);
+
   return (
-    <div
+    <motion.div
+      initial={{ scale: 1.1 }}
+      animate={{ scale: 1 }}
       className={
         'absolute transition-all duration-100 flex w-full h-full ' 
         + `${getTileColor(tile, type, highlighted)} ${getZIndex(type, highlighted)}`
       }
       onMouseUp={(e) => {
-        onDrop?.();
+        onDrop?.(rowIndex, colIndex);
 
         if (type !== 'base') {
           e.stopPropagation();
@@ -91,7 +98,7 @@ export default function Tile({ onDrop, tile, type, onGrab, bonus, center, highli
         } ${getInnerColor(type)} ${getRounding(type)}`}
       >
         {center ? (
-          <Icon icon="mdi:star" className="text-4xl" />
+          <Icon icon="solar:star-bold" className="text-4xl" />
         ): (
           <>
             {tile &&
@@ -108,6 +115,10 @@ export default function Tile({ onDrop, tile, type, onGrab, bonus, center, highli
           </>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
+
+const Tile = memo(InternalTile);
+
+export default Tile;
