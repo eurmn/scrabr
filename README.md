@@ -1,40 +1,12 @@
-# Next.js & NextUI Template
+# scrabr: Scrabble em português brasileiro
 
-This is a template for creating applications using Next.js 13 (app directory) and NextUI (v2).
+![image](https://github.com/eurmn/scrabr/assets/41550197/03e7a4ad-fdb2-43f4-bfa4-673b8f300a0c)
+![image](https://github.com/eurmn/scrabr/assets/41550197/409b5732-b501-4620-a3ca-dd7cb0b342f6)
+![image](https://github.com/eurmn/scrabr/assets/41550197/b889d838-83b6-4e4a-8034-63ec589ba5e6)
 
-## Technologies Used
-
-- [Next.js 13](https://nextjs.org/docs/getting-started)
-- [NextUI v2](https://nextui.org/)
-- [Tailwind CSS](https://tailwindcss.com/)
-- [Tailwind Variants](https://tailwind-variants.org)
-- [TypeScript](https://www.typescriptlang.org/)
-- [Framer Motion](https://www.framer.com/motion/)
-- [next-themes](https://github.com/pacocoursey/next-themes)
-
-## How to Use
-
-
-### Use the template with create-next-app
-
-To create a new project based on this template using `create-next-app`, run the following command:
-
-```bash
-npx create-next-app -e https://github.com/nextui-org/next-app-template
-```
-
-### Install dependencies
-
-```bash
-npm install
-```
-
-### Run the development server
-
-```bash
-npm run dev
-```
-
-## License
-
-Licensed under the [MIT license](https://github.com/nextui-org/next-app-template/blob/main/LICENSE).
+## Tecnologias
+ - [nextui](https://nextui.org/) (biblioteca de componentes)
+ - [nextjs](https://nextjs.org/)
+ - [drizzle](https://orm.drizzle.team/) (orm - postgre como banco de dados)
+ - [socket.io](https://socket.io/) (comunicação cliente-servidor dentro de jogo)
+ - [nodehun](https://github.com/Wulf/nodehun) (checagem de palavras sobre um [dicionário pré-determinado](https://github.com/eurmn/scrabr/tree/main/dict)
