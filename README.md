@@ -9,4 +9,4 @@
  - [nextjs](https://nextjs.org/)
  - [drizzle](https://orm.drizzle.team/) (orm - postgre como banco de dados)
  - [socket.io](https://socket.io/) (comunicação cliente-servidor dentro de jogo)
- - [nodehun](https://github.com/Wulf/nodehun) (checagem de palavras sobre um [dicionário pré-determinado](https://github.com/eurmn/scrabr/tree/main/dict)
+ - [nodehun](https://github.com/Wulf/nodehun) (checagem de palavras sobre um [dicionário pré-determinado](https://github.com/eurmn/scrabr/tree/main/dict))
